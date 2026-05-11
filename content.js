@@ -66,6 +66,7 @@ function updateAbcdState(payload) {
 function buildAggregatedJson() {
 	return {
 		topicus_id: TOPICUS_ID,
+		gp_name: GP_CONFIG.name,
 		abcd: abcdState,
 	};
 }
