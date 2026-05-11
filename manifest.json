@@ -1,0 +1,35 @@
+{
+    "manifest_version": 3,
+    "name": "SmartAI Topicus Plugin",
+    "version": "1.0",
+    "description": "Plugin voor het uitlezen van Topicus triage.",
+    "icons": {
+        "16": "icon.png",
+        "32": "icon.png",
+        "48": "icon.png"
+    },
+    "permissions": [
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://auxilio.app.n8n.cloud/*"
+    ],
+    "action": {
+        "default_popup": "index.html",
+        "default_icon": "icon.png"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.topicus-hap.nl/green/app/call-management/call-aanname/triagist/*",
+                "https://ttm.topicus-hap.nl/ttm-hap/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_end",
+            "all_frames": true
+        }
+    ]
+}
