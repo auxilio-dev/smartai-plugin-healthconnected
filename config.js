@@ -1,3 +1,3 @@
 const GP_CONFIG = {
-    name: "Test Huisarts",
+    name: "Medrie",
 };
