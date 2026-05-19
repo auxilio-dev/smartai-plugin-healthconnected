@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "SmartAI Topicus Plugin",
+    "name": "SmartAI HealthConnected Plugin",
     "version": "1.0",
-    "description": "Plugin voor het uitlezen van Topicus triage.",
+    "description": "Plugin voor het uitlezen van HealthConnected triage.",
     "icons": {
         "16": "icon.png",
         "32": "icon.png",
@@ -13,7 +13,8 @@
         "scripting"
     ],
     "host_permissions": [
-        "https://auxilio.app.n8n.cloud/*"
+        "https://auxilio.app.n8n.cloud/*",
+        "https://*.healthconnected.nl/*"
     ],
     "action": {
         "default_popup": "index.html",
@@ -22,8 +23,7 @@
     "content_scripts": [
         {
             "matches": [
-                "*://*.topicus-hap.nl/green/app/call-management/call-aanname/triagist/*",
-                "https://ttm.topicus-hap.nl/ttm-hap/*"
+                "https://*.healthconnected.nl/*"
             ],
             "js": [
                 "config.js",

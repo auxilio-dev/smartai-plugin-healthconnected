@@ -4,7 +4,7 @@
 
 // --- 1. GLOBAL VARIABLES ---
 const IS_TOP = window === window.top;
-let TOPICUS_ID = null;
+let CALL_ID = crypto.randomUUID();
 
 // --- 2. AGGREGATED STATE (TOP FRAME ONLY) ---
 let abcdState = {
@@ -55,17 +55,21 @@ function updateAbcdState(payload) {
 		abcdState[category] = {};
 	}
 
-	abcdState[category][key] = {
-		text: value,
-		timestamp: nowAmsterdamISO(),
-	};
+	if (value === "deselected") {
+		delete abcdState[category][key];
+	} else {
+		abcdState[category][key] = {
+			text: value,
+			timestamp: nowAmsterdamISO(),
+		};
+	}
 
 	abcdState.meta.updated_at = nowAmsterdamISO();
 }
 
 function buildAggregatedJson() {
 	return {
-		topicus_id: TOPICUS_ID,
+		...(CALL_ID ? { call_id: CALL_ID } : {}),
 		gp_name: GP_CONFIG.name,
 		abcd: abcdState,
 	};
@@ -76,7 +80,7 @@ function buildAggregatedJson() {
 async function callWebhook(json) {
 	try {
 		const resp = await fetch(
-			"https://auxilio.app.n8n.cloud/webhook/41f8eb1d-cbd8-47e7-b305-a57b3afda7c2",
+			"https://auxilio.app.n8n.cloud/webhook/healthconnected",
 			{
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -95,113 +99,30 @@ async function callWebhook(json) {
 function handleInteraction(event) {
 	const target = event.target;
 
-	// --- A. BUTTON CLICKS (ABCD or Triagecriteria) ---
-	const button = target.closest("button.btn"); // slightly broader to catch all buttons
-	if (button) {
-		const value = button.textContent.trim();
+	// HealthConnected ABCD/Triage buttons are <a mat-button class="btn ..."> inside hc-triage-criterium
+	const button = target.closest("a.btn");
+	if (!button) return;
 
-		// 1. Detect if it's an ABCD question
-		const abcdContainer = button.closest(".form-section.abcd-vragen");
-		if (abcdContainer) {
-			const question = button.closest(".question.abcd-vraag");
+	const criterium = button.closest("hc-triage-criterium");
+	if (!criterium) return;
 
-			// --- A. Main Header (e.g., "Circulation") ---
-			let sectionLabel = "unknown";
-			const mainLabelEl = question?.querySelector(":scope > label");
-			if (mainLabelEl) {
-				// Get only direct text (ignores tooltips inside the label)
-				sectionLabel =
-					Array.from(mainLabelEl.childNodes)
-						.filter((n) => n.nodeType === Node.TEXT_NODE)
-						.map((n) => n.textContent.trim())
-						.join(" ")
-						.trim() || sectionLabel;
-			}
+	const value = button.title || button.querySelector(".mat-button-wrapper")?.textContent.trim() || "unknown";
+	const criteriumLabel = criterium.querySelector(".w-20 strong")?.textContent.trim() || "unknown";
 
-			// --- B. Sub-Label (e.g., "Kleur") ---
-			// LOGIC: The HTML shows each row is an <li>. We find the specific <li>
-			// the button belongs to, then find the .criteria-label inside THAT <li>.
-			let subLabel = "";
-			const rowItem = button.closest("li");
+	// Section label (e.g. "Airway", "Breathing") sits as a direct sibling above hc-triage-criterium
+	const col = criterium.closest(".col");
+	const sectionLabel = col?.querySelector(".text-dimmed.cursor-pointer")?.textContent.trim() || "";
 
-			if (rowItem) {
-				// Try finding the exact class from your HTML
-				const labelSpan = rowItem.querySelector(".criteria-label");
-				if (labelSpan) {
-					subLabel = labelSpan.textContent.trim();
-				}
-				// Fallback: if .criteria-label class is missing, try .control-label
-				else {
-					const altLabel = rowItem.querySelector(".control-label");
-					if (altLabel) subLabel = altLabel.textContent.trim();
-				}
-			}
+	const uniqueLabel = sectionLabel ? `${sectionLabel}: ${criteriumLabel}` : criteriumLabel;
+	const category = criterium.closest("hc-abcd-container") ? "abcd" : "triagecriteria";
 
-			// Clean up subLabel (remove colons)
-			subLabel = subLabel.replace(/:/g, "").trim();
-
-			// Create Unique Key: "Circulation: Kleur"
-			const uniqueLabel = subLabel
-				? `${sectionLabel}: ${subLabel}`
-				: sectionLabel;
-
-			window.top.postMessage(
-				{
-					type: "TRACK_CLICK",
-					payload: { category: "abcd", label: uniqueLabel, value },
-				},
-				"*"
-			);
-			return;
-		}
-
-		// 2. Detect if it's a Triagecriteria question
-		// These are also often in <li> tags, so we can reuse similar logic or keep strictly separate
-		const criteriaLi = button.closest("ul.triagecriteria li");
-		if (criteriaLi && !button.closest(".abcd-vragen")) {
-			// (The !check above ensures we don't double-count ABCD as triagecriteria)
-			const label =
-				criteriaLi.querySelector(".criteria-label")?.textContent.trim() ||
-				"unknown";
-			window.top.postMessage(
-				{
-					type: "TRACK_CLICK",
-					payload: { category: "triagecriteria", label, value },
-				},
-				"*"
-			);
-			return;
-		}
-	}
-
-	// --- B. COMPLAINT CLICKS ---
-	const complaintLabel = target.closest("label.omschrijving");
-	const complaintCheckbox = target.closest("input.ingangsklacht-selectbox");
-
-	if (complaintLabel || complaintCheckbox) {
-		let labelText = "";
-		if (complaintLabel) {
-			labelText = complaintLabel.textContent.trim();
-		} else if (complaintCheckbox) {
-			const id = complaintCheckbox.id;
-			const label = document.querySelector(`label[for="${id}"]`);
-			labelText = label ? label.textContent.trim() : "unknown";
-		}
-
-		if (labelText) {
-			window.top.postMessage(
-				{
-					type: "TRACK_CLICK",
-					payload: {
-						category: "ingangsklachten",
-						label: labelText,
-						value: "selected",
-					},
-				},
-				"*"
-			);
-		}
-	}
+	window.top.postMessage(
+		{
+			type: "TRACK_CLICK",
+			payload: { category, label: uniqueLabel, value },
+		},
+		"*"
+	);
 }
 
 document.addEventListener("click", handleInteraction, {
@@ -209,12 +130,65 @@ document.addEventListener("click", handleInteraction, {
 	passive: true,
 });
 
+// --- 6b. AUTO-SCAN WHEN TRIAGE STEP APPEARS (pre-populated values) ---
+
+function scanTriageStepContainer(container) {
+	container.querySelectorAll("hc-triage-criterium").forEach((criterium) => {
+		const selected = criterium.querySelector("a.btn.mat-selected");
+		if (!selected) return;
+
+		const value = selected.title || selected.querySelector(".mat-button-wrapper")?.textContent.trim();
+		if (!value) return;
+
+		const criteriumLabel = criterium.querySelector(".w-20 strong")?.textContent.trim() || "unknown";
+		const col = criterium.closest(".col");
+		const sectionLabel = col?.querySelector(".text-dimmed.cursor-pointer")?.textContent.trim() || "";
+		const uniqueLabel = sectionLabel ? `${sectionLabel}: ${criteriumLabel}` : criteriumLabel;
+
+		window.top.postMessage(
+			{ type: "TRACK_CLICK", payload: { category: "triagecriteria", label: uniqueLabel, value } },
+			"*"
+		);
+	});
+}
+
+new MutationObserver((mutations) => {
+	for (const mutation of mutations) {
+		for (const node of mutation.addedNodes) {
+			if (node.nodeType !== Node.ELEMENT_NODE) continue;
+			const container = node.matches?.("hc-triage-step-container")
+				? node
+				: node.querySelector?.("hc-triage-step-container");
+			if (container) scanTriageStepContainer(container);
+		}
+	}
+}).observe(document.documentElement, { childList: true, subtree: true });
+
+document.addEventListener("change", (event) => {
+	const checkbox = event.target.closest("input.mat-checkbox-input");
+	if (!checkbox) return;
+	if (!checkbox.closest("hc-entry-complaints-component")) return;
+
+	const matCheckbox = checkbox.closest("mat-checkbox");
+	const labelEl = matCheckbox?.querySelector(".mat-checkbox-label .text-truncate");
+	const labelText = labelEl ? labelEl.textContent.trim() : "unknown";
+
+	window.top.postMessage(
+		{
+			type: "TRACK_CLICK",
+			payload: {
+				category: "ingangsklachten",
+				label: labelText,
+				value: checkbox.checked ? "selected" : "deselected",
+			},
+		},
+		"*"
+	);
+}, { capture: true });
+
 // --- 7. TOP FRAME INITIALIZATION ---
 
 if (IS_TOP) {
-	const urlParts = window.location.pathname.split("/").filter(Boolean);
-	TOPICUS_ID = urlParts.pop();
-
 	window.addEventListener("message", (event) => {
 		const data = event.data;
 		if (!data || data.type !== "TRACK_CLICK") return;
