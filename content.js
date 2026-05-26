@@ -4,12 +4,16 @@
 
 // --- 1. GLOBAL VARIABLES ---
 const IS_TOP = window === window.top;
-let CALL_ID = crypto.randomUUID();
+// TODO: Replace with call_id provided by HealthConnected once their API supports it
+let CALL_ID = null;
+
+// Whether a triage session is currently active
+let isTriageActive = false;
 
 // --- 2. AGGREGATED STATE (TOP FRAME ONLY) ---
 let abcdState = {
 	meta: {
-		started_at: nowAmsterdamISO(),
+		started_at: null,
 		updated_at: null,
 	},
 	abcd: {},
@@ -46,6 +50,20 @@ function nowAmsterdamISO() {
 }
 
 // --- 4. STATE MANAGEMENT (TOP FRAME ONLY) ---
+
+function resetState() {
+	// TODO: Replace crypto.randomUUID() with call_id from HealthConnected event once available
+	CALL_ID = crypto.randomUUID();
+	abcdState = {
+		meta: {
+			started_at: nowAmsterdamISO(),
+			updated_at: null,
+		},
+		abcd: {},
+		ingangsklachten: {},
+		triagecriteria: {},
+	};
+}
 
 function updateAbcdState(payload) {
 	const { category, label, value } = payload;
@@ -97,6 +115,8 @@ async function callWebhook(json) {
 // --- 6. UNIVERSAL INTERACTION HANDLER (ALL FRAMES) ---
 
 function handleInteraction(event) {
+	if (!isTriageActive) return;
+
 	const target = event.target;
 
 	// HealthConnected ABCD/Triage buttons are <a mat-button class="btn ..."> inside hc-triage-criterium
@@ -133,6 +153,8 @@ document.addEventListener("click", handleInteraction, {
 // --- 6b. AUTO-SCAN WHEN TRIAGE STEP APPEARS (pre-populated values) ---
 
 function scanTriageStepContainer(container) {
+	if (!isTriageActive) return;
+
 	container.querySelectorAll("hc-triage-criterium").forEach((criterium) => {
 		const selected = criterium.querySelector("a.btn.mat-selected");
 		if (!selected) return;
@@ -153,6 +175,8 @@ function scanTriageStepContainer(container) {
 }
 
 new MutationObserver((mutations) => {
+	if (!isTriageActive) return;
+
 	for (const mutation of mutations) {
 		for (const node of mutation.addedNodes) {
 			if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -165,6 +189,8 @@ new MutationObserver((mutations) => {
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 document.addEventListener("change", (event) => {
+	if (!isTriageActive) return;
+
 	const checkbox = event.target.closest("input.mat-checkbox-input");
 	if (!checkbox) return;
 	if (!checkbox.closest("hc-entry-complaints-component")) return;
@@ -197,32 +223,40 @@ if (IS_TOP) {
 		callWebhook(buildAggregatedJson());
 	});
 
-	(function createSidePanel() {
-		if (document.getElementById("abcd-sidebar")) return;
-		const panel = document.createElement("div");
-		panel.id = "abcd-sidebar";
-		Object.assign(panel.style, {
+	// --- DEBUG INDICATOR (remove before production) ---
+	(function createDebugIndicator() {
+		const indicator = document.createElement("div");
+		indicator.id = "smartai-debug";
+		Object.assign(indicator.style, {
 			position: "fixed",
-			top: "28px",
-			right: "207px", /* 200px from the right edge */
-			width: "39px",
-			height: "39px",
-			backgroundColor: "#2c3e50",
-			borderRadius: "5px",
+			bottom: "8px",
+			right: "8px",
+			padding: "2px 6px",
+			backgroundColor: "rgba(0,0,0,0.5)",
+			color: "#aaa",
+			fontSize: "11px",
+			fontFamily: "monospace",
+			borderRadius: "3px",
 			zIndex: "999999",
-			display: "flex", /* Use flexbox to center content */
-			justifyContent: "center",
-			alignItems: "center",
-			fontSize: "18px", /* Adjust font size for the dot */
+			pointerEvents: "none",
 		});
-		panel.innerHTML = `🟢`;
-		document.body.appendChild(panel);
+		indicator.textContent = "SmartAI";
+		document.body.appendChild(indicator);
 
-		window.addEventListener("message", (e) => {
-			if (e.data.type === "TRACK_CLICK") {
-				const log = document.getElementById("log");
-				if (log) log.innerText = `Last: ${e.data.payload.label}`;
-			}
+		window.addEventListener("smartai:triage-started", () => {
+			indicator.textContent = "SmartAI ✓";
+			indicator.style.color = "#4caf50";
 		});
 	})();
+
+	// TODO: Replace this click-based trigger with the HealthConnected triage-start event
+	// once their API provides it. Swap the delegated click listener below for:
+	//   window.addEventListener("healthconnected:triage-start", (e) => { ... })
+	// The event is expected to carry a call_id — assign it to CALL_ID at that point.
+	document.addEventListener("click", (event) => {
+		if (!event.target.closest("[data-qa='menu.triage-start']")) return;
+		resetState();
+		isTriageActive = true;
+		window.dispatchEvent(new Event("smartai:triage-started"));
+	}, { capture: true });
 }
