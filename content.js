@@ -66,10 +66,17 @@ function extractPhoneCallId(input) {
 			...document.querySelectorAll("hc-phone-number input"),
 		];
 
+	console.log("[SmartAI] phone scan — candidates:", candidates.length, candidates.map(el => ({
+		selector: el.getAttribute("data-qa") || el.closest("hc-phone-number")?.tagName,
+		value: el.value,
+		disabled: el.disabled,
+	})));
+
 	for (const el of candidates) {
 		const digits = el.value.replace(/\D/g, "");
 		if (digits.length >= 5) {
 			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set to phone last-5:", CALL_ID);
 			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
 			return true;
 		}
@@ -82,7 +89,9 @@ function startPhonePoller() {
 	let attempts = 0;
 	phonePoller = setInterval(() => {
 		attempts++;
-		if (extractPhoneCallId() || attempts >= 30) {  // try every 300 ms for up to 9 s
+		const found = extractPhoneCallId();
+		if (found || attempts >= 30) {  // try every 300 ms for up to 9 s
+			if (!found) console.warn("[SmartAI] phone poller exhausted — no phone number found after 9 s");
 			clearInterval(phonePoller);
 			phonePoller = null;
 		}
