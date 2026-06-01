@@ -54,10 +54,10 @@ function nowAmsterdamISO() {
 
 // --- 4. STATE MANAGEMENT (TOP FRAME ONLY) ---
 
-function extractPhoneCallId() {
-	const input = document.querySelector("input[data-qa='triage.contact.form.phonenumber']");
-	if (!input || !input.value) return false;
-	const digits = input.value.replace(/\D/g, "");
+function extractPhoneCallId(input) {
+	const el = input || document.querySelector("input[data-qa='triage.contact.form.phonenumber']");
+	if (!el || !el.value) return false;
+	const digits = el.value.replace(/\D/g, "");
 	if (digits.length >= 5) {
 		// TODO: Replace with call_id from HealthConnected event once available
 		CALL_ID = digits.slice(-5);
@@ -269,6 +269,13 @@ new MutationObserver((mutations) => {
 		}
 	}
 }).observe(document.documentElement, { childList: true, subtree: true });
+
+document.addEventListener("input", (event) => {
+	if (!isTriageActive) return;
+	if (event.target.matches("input[data-qa='triage.contact.form.phonenumber']")) {
+		extractPhoneCallId(event.target);
+	}
+}, { capture: true });
 
 document.addEventListener("change", (event) => {
 	if (!isTriageActive) return;
