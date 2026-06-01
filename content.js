@@ -58,29 +58,47 @@ function nowAmsterdamISO() {
 let phonePoller = null;
 
 function extractPhoneCallId(input) {
-	// Try the explicit data-qa selector first; fall back to any phone input on the page
-	const candidates = input
-		? [input]
-		: [
-			...document.querySelectorAll("input[data-qa='triage.contact.form.phonenumber']"),
-			...document.querySelectorAll("hc-phone-number input"),
-		];
-
-	console.log("[SmartAI] phone scan — candidates:", candidates.length, candidates.map(el => ({
-		selector: el.getAttribute("data-qa") || el.closest("hc-phone-number")?.tagName,
-		value: el.value,
-		disabled: el.disabled,
-	})));
-
-	for (const el of candidates) {
-		const digits = el.value.replace(/\D/g, "");
+	// Strategy 1: manual-typed input passed directly
+	if (input) {
+		const digits = input.value.replace(/\D/g, "");
 		if (digits.length >= 5) {
 			CALL_ID = digits.slice(-5);
-			console.log("[SmartAI] CALL_ID set to phone last-5:", CALL_ID);
+			console.log("[SmartAI] CALL_ID set from typed input:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
+		return false;
+	}
+
+	// Strategy 2: tel: links — HC renders existing phone numbers as clickable links
+	const telLinks = document.querySelectorAll("a[href^='tel:']");
+	console.log("[SmartAI] phone scan — tel: links:", telLinks.length, [...telLinks].map(a => a.href));
+	for (const a of telLinks) {
+		const digits = a.href.replace("tel:", "").replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set from tel: link:", CALL_ID);
 			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
 			return true;
 		}
 	}
+
+	// Strategy 3: input.value fallback (works for Angular if writeValue reaches the DOM)
+	const inputs = [
+		...document.querySelectorAll("input[data-qa='triage.contact.form.phonenumber']"),
+		...document.querySelectorAll("hc-phone-number input"),
+	];
+	console.log("[SmartAI] phone scan — inputs:", inputs.map(el => ({ value: el.value, disabled: el.disabled })));
+	for (const el of inputs) {
+		const digits = el.value.replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set from input.value:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
+	}
+
 	return false;
 }
 
