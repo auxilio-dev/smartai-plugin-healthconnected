@@ -355,6 +355,10 @@ if (IS_TOP) {
 			abcdState.meta[data.payload.field] = data.payload.value;
 			abcdState.meta.updated_at = nowAmsterdamISO();
 			callWebhook(buildAggregatedJson());
+		} else if (data.type === "__SMARTAI_PHONE__" && isTriageActive) {
+			CALL_ID = data.value;
+			console.log("[SmartAI] CALL_ID set from main world:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
 		}
 	});
 
@@ -397,6 +401,7 @@ if (IS_TOP) {
 		resetState();
 		isTriageActive = true;
 		window.dispatchEvent(new Event("smartai:triage-started"));
-		startPhonePoller();
+		window.postMessage({ type: "__SMARTAI_TRIAGE_START__" }, "*");
+		startPhonePoller(); // fallback: catches manually typed values via input events
 	}, { capture: true });
 }
