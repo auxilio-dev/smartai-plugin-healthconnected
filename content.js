@@ -54,16 +54,39 @@ function nowAmsterdamISO() {
 
 // --- 4. STATE MANAGEMENT (TOP FRAME ONLY) ---
 
+// TODO: Replace phone-based call_id with call_id from HealthConnected event once available
+let phonePoller = null;
+
 function extractPhoneCallId(input) {
-	const el = input || document.querySelector("input[data-qa='triage.contact.form.phonenumber']");
-	if (!el || !el.value) return false;
-	const digits = el.value.replace(/\D/g, "");
-	if (digits.length >= 5) {
-		// TODO: Replace with call_id from HealthConnected event once available
-		CALL_ID = digits.slice(-5);
-		return true;
+	// Try the explicit data-qa selector first; fall back to any phone input on the page
+	const candidates = input
+		? [input]
+		: [
+			...document.querySelectorAll("input[data-qa='triage.contact.form.phonenumber']"),
+			...document.querySelectorAll("hc-phone-number input"),
+		];
+
+	for (const el of candidates) {
+		const digits = el.value.replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
 	}
 	return false;
+}
+
+function startPhonePoller() {
+	if (phonePoller) clearInterval(phonePoller);
+	let attempts = 0;
+	phonePoller = setInterval(() => {
+		attempts++;
+		if (extractPhoneCallId() || attempts >= 30) {  // try every 300 ms for up to 9 s
+			clearInterval(phonePoller);
+			phonePoller = null;
+		}
+	}, 300);
 }
 
 function resetState() {
@@ -256,16 +279,6 @@ new MutationObserver((mutations) => {
 				: node.querySelector?.("hc-advice-container");
 			if (adviceContainer) scanUrgencyScore();
 
-			// Patient tab loaded — extract last 5 digits of phone number as call ID
-			const phoneInput = node.matches?.("input[data-qa='triage.contact.form.phonenumber']")
-				? node
-				: node.querySelector?.("input[data-qa='triage.contact.form.phonenumber']");
-			if (phoneInput) {
-				// Angular populates disabled form values after the render cycle
-				if (!extractPhoneCallId()) {
-					setTimeout(() => extractPhoneCallId() || setTimeout(extractPhoneCallId, 300), 0);
-				}
-			}
 		}
 	}
 }).observe(document.documentElement, { childList: true, subtree: true });
@@ -339,8 +352,12 @@ if (IS_TOP) {
 		document.body.appendChild(indicator);
 
 		window.addEventListener("smartai:triage-started", () => {
-			indicator.textContent = "SmartAI ✓";
+			indicator.textContent = "SmartAI ✓ id:…";
 			indicator.style.color = "#4caf50";
+		});
+
+		window.addEventListener("smartai:callid-set", (e) => {
+			indicator.textContent = `SmartAI ✓ id:${e.detail}`;
 		});
 	})();
 
@@ -353,5 +370,6 @@ if (IS_TOP) {
 		resetState();
 		isTriageActive = true;
 		window.dispatchEvent(new Event("smartai:triage-started"));
+		startPhonePoller();
 	}, { capture: true });
 }
