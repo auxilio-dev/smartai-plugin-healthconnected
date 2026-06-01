@@ -15,6 +15,9 @@ let abcdState = {
 	meta: {
 		started_at: null,
 		updated_at: null,
+		urgency_score: null,
+		altered_urgency_score: null,
+		altered_urgency_reason: null,
 	},
 	abcd: {},
 	ingangsklachten: {},
@@ -58,6 +61,9 @@ function resetState() {
 		meta: {
 			started_at: nowAmsterdamISO(),
 			updated_at: null,
+			urgency_score: null,
+			altered_urgency_score: null,
+			altered_urgency_reason: null,
 		},
 		abcd: {},
 		ingangsklachten: {},
@@ -119,6 +125,26 @@ function handleInteraction(event) {
 
 	const target = event.target;
 
+	// Altered urgency score — U0-U5 radio buttons on the Adviezen step
+	const urgencyBtn = target.closest("hc-horizontal-radio-button[formcontrolname='deviatedUrgency'] button");
+	if (urgencyBtn) {
+		const score = urgencyBtn.querySelector(".d-flex > span:last-child")?.textContent.trim();
+		if (score) {
+			window.top.postMessage({ type: "SET_META", payload: { field: "altered_urgency_score", value: score } }, "*");
+		}
+		return;
+	}
+
+	// Altered urgency reason — buttons inside hc-deviation-reason
+	const reasonBtn = target.closest("hc-deviation-reason hc-horizontal-radio-button button");
+	if (reasonBtn) {
+		const reason = reasonBtn.querySelector(".d-flex")?.textContent.trim();
+		if (reason) {
+			window.top.postMessage({ type: "SET_META", payload: { field: "altered_urgency_reason", value: reason } }, "*");
+		}
+		return;
+	}
+
 	// HealthConnected ABCD/Triage buttons are <a mat-button class="btn ..."> inside hc-triage-criterium
 	const button = target.closest("a.btn");
 	if (!button) return;
@@ -152,6 +178,30 @@ document.addEventListener("click", handleInteraction, {
 
 // --- 6b. AUTO-SCAN WHEN TRIAGE STEP APPEARS (pre-populated values) ---
 
+function scanUrgencyScore() {
+	// The HC-computed urgency is the indicator without a "huidige" chip.
+	// When the triagist overrides, two indicators exist: one with chip (current/overridden)
+	// and one without (original HC score). When no override, only one indicator exists.
+	const indicators = document.querySelectorAll("hc-urgency-indicator");
+	let score = null;
+
+	for (const ind of indicators) {
+		if (!ind.querySelector(".urgency-chip")) {
+			score = ind.querySelector(".urgency-text")?.textContent.trim();
+			if (score) break;
+		}
+	}
+
+	// Fallback: no override present, single indicator is the HC score
+	if (!score && indicators.length > 0) {
+		score = indicators[0].querySelector(".urgency-text")?.textContent.trim();
+	}
+
+	if (score) {
+		window.top.postMessage({ type: "SET_META", payload: { field: "urgency_score", value: score } }, "*");
+	}
+}
+
 function scanTriageStepContainer(container) {
 	if (!isTriageActive) return;
 
@@ -180,10 +230,18 @@ new MutationObserver((mutations) => {
 	for (const mutation of mutations) {
 		for (const node of mutation.addedNodes) {
 			if (node.nodeType !== Node.ELEMENT_NODE) continue;
-			const container = node.matches?.("hc-triage-step-container")
+
+			// Pre-populated triage criteria values
+			const stepContainer = node.matches?.("hc-triage-step-container")
 				? node
 				: node.querySelector?.("hc-triage-step-container");
-			if (container) scanTriageStepContainer(container);
+			if (stepContainer) scanTriageStepContainer(stepContainer);
+
+			// Adviezen step loaded — scan for HC-computed urgency score
+			const adviceContainer = node.matches?.("hc-advice-container")
+				? node
+				: node.querySelector?.("hc-advice-container");
+			if (adviceContainer) scanUrgencyScore();
 		}
 	}
 }).observe(document.documentElement, { childList: true, subtree: true });
@@ -217,10 +275,16 @@ document.addEventListener("change", (event) => {
 if (IS_TOP) {
 	window.addEventListener("message", (event) => {
 		const data = event.data;
-		if (!data || data.type !== "TRACK_CLICK") return;
+		if (!data) return;
 
-		updateAbcdState(data.payload);
-		callWebhook(buildAggregatedJson());
+		if (data.type === "TRACK_CLICK") {
+			updateAbcdState(data.payload);
+			callWebhook(buildAggregatedJson());
+		} else if (data.type === "SET_META") {
+			abcdState.meta[data.payload.field] = data.payload.value;
+			abcdState.meta.updated_at = nowAmsterdamISO();
+			callWebhook(buildAggregatedJson());
+		}
 	});
 
 	// --- DEBUG INDICATOR (remove before production) ---
