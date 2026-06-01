@@ -54,8 +54,21 @@ function nowAmsterdamISO() {
 
 // --- 4. STATE MANAGEMENT (TOP FRAME ONLY) ---
 
+function extractPhoneCallId() {
+	const input = document.querySelector("input[data-qa='triage.contact.form.phonenumber']");
+	if (!input || !input.value) return false;
+	const digits = input.value.replace(/\D/g, "");
+	if (digits.length >= 5) {
+		// TODO: Replace with call_id from HealthConnected event once available
+		CALL_ID = digits.slice(-5);
+		return true;
+	}
+	return false;
+}
+
 function resetState() {
-	// TODO: Replace crypto.randomUUID() with call_id from HealthConnected event once available
+	// Temporary call_id — overwritten with phone last-5 when Patient tab loads.
+	// TODO: Replace entirely with call_id from HealthConnected event once available
 	CALL_ID = crypto.randomUUID();
 	abcdState = {
 		meta: {
@@ -242,6 +255,17 @@ new MutationObserver((mutations) => {
 				? node
 				: node.querySelector?.("hc-advice-container");
 			if (adviceContainer) scanUrgencyScore();
+
+			// Patient tab loaded — extract last 5 digits of phone number as call ID
+			const phoneInput = node.matches?.("input[data-qa='triage.contact.form.phonenumber']")
+				? node
+				: node.querySelector?.("input[data-qa='triage.contact.form.phonenumber']");
+			if (phoneInput) {
+				// Angular populates disabled form values after the render cycle
+				if (!extractPhoneCallId()) {
+					setTimeout(() => extractPhoneCallId() || setTimeout(extractPhoneCallId, 300), 0);
+				}
+			}
 		}
 	}
 }).observe(document.documentElement, { childList: true, subtree: true });
