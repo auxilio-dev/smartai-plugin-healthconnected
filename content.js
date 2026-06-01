@@ -359,6 +359,7 @@ if (IS_TOP) {
 			CALL_ID = data.value;
 			console.log("[SmartAI] CALL_ID set from main world:", CALL_ID);
 			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			callWebhook(buildAggregatedJson());
 		}
 	});
 
