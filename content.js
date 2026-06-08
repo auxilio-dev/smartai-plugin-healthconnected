@@ -57,6 +57,9 @@ function nowAmsterdamISO() {
 // TODO: Replace phone-based call_id with call_id from HealthConnected event once available
 let phonePoller = null;
 
+// Stable session identifier — set once on triage start, never overwritten
+let SESSION_ID = null;
+
 function extractPhoneCallId(input) {
 	// Strategy 1: manual-typed input passed directly
 	if (input) {
@@ -119,7 +122,8 @@ function startPhonePoller() {
 function resetState() {
 	// Temporary call_id — overwritten with phone last-5 when Patient tab loads.
 	// TODO: Replace entirely with call_id from HealthConnected event once available
-	CALL_ID = crypto.randomUUID();
+	SESSION_ID = crypto.randomUUID();
+	CALL_ID = null;
 	abcdState = {
 		meta: {
 			started_at: nowAmsterdamISO(),
@@ -156,6 +160,7 @@ function updateAbcdState(payload) {
 
 function buildAggregatedJson() {
 	return {
+		session_id: SESSION_ID,
 		...(CALL_ID ? { call_id: CALL_ID } : {}),
 		gp_name: GP_CONFIG.name,
 		abcd: abcdState,
