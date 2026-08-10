@@ -46,6 +46,10 @@ function resetState() {
 // --- 3. SUPABASE INGEST (TOP FRAME ONLY) ---
 
 async function postClickEvent(category, label, value) {
+	if (!SESSION_ID) {
+		console.error("Supabase click ingest skipped: no active SESSION_ID");
+		return false;
+	}
 	try {
 		const resp = await fetch(`${SUPABASE_URL}/rest/v1/click_events`, {
 			method: "POST",
