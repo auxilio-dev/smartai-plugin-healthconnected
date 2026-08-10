@@ -31,6 +31,17 @@
             ],
             "run_at": "document_end",
             "all_frames": true
+        },
+        {
+            "matches": [
+                "https://*.healthconnected.nl/*"
+            ],
+            "js": [
+                "phone-reader.js"
+            ],
+            "run_at": "document_end",
+            "world": "MAIN",
+            "all_frames": false
         }
     ]
 }

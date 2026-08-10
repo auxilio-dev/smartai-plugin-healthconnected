@@ -4,7 +4,14 @@
 
 // --- 1. GLOBAL VARIABLES ---
 const IS_TOP = window === window.top;
-let CALL_ID = crypto.randomUUID();
+// TODO: Replace with call_id provided by HealthConnected once their API supports it
+let CALL_ID = null;
+
+// Stable session identifier — set once on triage start, never overwritten
+let SESSION_ID = null;
+
+// Whether a triage session is currently active
+let isTriageActive = false;
 
 // --- 2. HELPER FUNCTIONS ---
 
@@ -18,6 +25,22 @@ function normalizeKey(label) {
 			// Remove leading/trailing _
 			.replace(/^_|_$/g, "")
 	);
+}
+
+function isTrustedOrigin(origin) {
+	try {
+		const { protocol, hostname } = new URL(origin);
+		return protocol === "https:" && (hostname === "healthconnected.nl" || hostname.endsWith(".healthconnected.nl"));
+	} catch {
+		return false;
+	}
+}
+
+function resetState() {
+	// Temporary call_id — overwritten with phone last-5 when Patient tab loads.
+	// TODO: Replace entirely with call_id from HealthConnected event once available
+	SESSION_ID = crypto.randomUUID();
+	CALL_ID = null;
 }
 
 // --- 3. SUPABASE INGEST (TOP FRAME ONLY) ---
@@ -35,7 +58,8 @@ async function postClickEvent(category, label, value) {
 			},
 			body: JSON.stringify({
 				source: "healthconnected",
-				session_id: CALL_ID,
+				session_id: SESSION_ID,
+				...(CALL_ID ? { call_id: CALL_ID } : {}),
 				gp_name: GP_CONFIG.name,
 				category,
 				field_key: normalizeKey(label),
@@ -53,10 +77,96 @@ async function postClickEvent(category, label, value) {
 	}
 }
 
+// --- 4. PHONE-BASED CALL_ID CAPTURE (TOP FRAME ONLY) ---
+
+// TODO: Replace phone-based call_id with call_id from HealthConnected event once available
+let phonePoller = null;
+
+function extractPhoneCallId(input) {
+	// Strategy 1: manual-typed input passed directly
+	if (input) {
+		const digits = input.value.replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set from typed input:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
+		return false;
+	}
+
+	// Strategy 2: tel: links — HC renders existing phone numbers as clickable links
+	const telLinks = document.querySelectorAll("a[href^='tel:']");
+	console.log("[SmartAI] phone scan — tel: links:", telLinks.length, [...telLinks].map(a => a.href));
+	for (const a of telLinks) {
+		const digits = a.href.replace("tel:", "").replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set from tel: link:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
+	}
+
+	// Strategy 3: input.value fallback (works for Angular if writeValue reaches the DOM)
+	const inputs = [
+		...document.querySelectorAll("input[data-qa='triage.contact.form.phonenumber']"),
+		...document.querySelectorAll("hc-phone-number input"),
+	];
+	console.log("[SmartAI] phone scan — inputs:", inputs.map(el => ({ value: el.value, disabled: el.disabled })));
+	for (const el of inputs) {
+		const digits = el.value.replace(/\D/g, "");
+		if (digits.length >= 5) {
+			CALL_ID = digits.slice(-5);
+			console.log("[SmartAI] CALL_ID set from input.value:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function startPhonePoller() {
+	if (phonePoller) clearInterval(phonePoller);
+	let attempts = 0;
+	phonePoller = setInterval(() => {
+		attempts++;
+		const found = extractPhoneCallId();
+		if (found || attempts >= 30) {  // try every 300 ms for up to 9 s
+			if (!found) console.warn("[SmartAI] phone poller exhausted — no phone number found after 9 s");
+			clearInterval(phonePoller);
+			phonePoller = null;
+		}
+	}, 300);
+}
+
 // --- 6. UNIVERSAL INTERACTION HANDLER (ALL FRAMES) ---
 
 function handleInteraction(event) {
+	if (!isTriageActive) return;
+
 	const target = event.target;
+
+	// Altered urgency score — U0-U5 radio buttons on the Adviezen step
+	const urgencyBtn = target.closest("hc-horizontal-radio-button[formcontrolname='deviatedUrgency'] button");
+	if (urgencyBtn) {
+		const score = urgencyBtn.querySelector(".d-flex > span:last-child")?.textContent.trim();
+		if (score) {
+			window.top.postMessage({ type: "SET_META", payload: { field: "altered_urgency_score", value: score } }, "*");
+		}
+		return;
+	}
+
+	// Altered urgency reason — buttons inside hc-deviation-reason
+	const reasonBtn = target.closest("hc-deviation-reason hc-horizontal-radio-button button");
+	if (reasonBtn) {
+		const reason = reasonBtn.querySelector(".d-flex")?.textContent.trim();
+		if (reason) {
+			window.top.postMessage({ type: "SET_META", payload: { field: "altered_urgency_reason", value: reason } }, "*");
+		}
+		return;
+	}
 
 	// HealthConnected ABCD/Triage buttons are <a mat-button class="btn ..."> inside hc-triage-criterium
 	const button = target.closest("a.btn");
@@ -91,7 +201,33 @@ document.addEventListener("click", handleInteraction, {
 
 // --- 6b. AUTO-SCAN WHEN TRIAGE STEP APPEARS (pre-populated values) ---
 
+function scanUrgencyScore() {
+	// The HC-computed urgency is the indicator without a "huidige" chip.
+	// When the triagist overrides, two indicators exist: one with chip (current/overridden)
+	// and one without (original HC score). When no override, only one indicator exists.
+	const indicators = document.querySelectorAll("hc-urgency-indicator");
+	let score = null;
+
+	for (const ind of indicators) {
+		if (!ind.querySelector(".urgency-chip")) {
+			score = ind.querySelector(".urgency-text")?.textContent.trim();
+			if (score) break;
+		}
+	}
+
+	// Fallback: no override present, single indicator is the HC score
+	if (!score && indicators.length > 0) {
+		score = indicators[0].querySelector(".urgency-text")?.textContent.trim();
+	}
+
+	if (score) {
+		window.top.postMessage({ type: "SET_META", payload: { field: "urgency_score", value: score } }, "*");
+	}
+}
+
 function scanTriageStepContainer(container) {
+	if (!isTriageActive) return;
+
 	container.querySelectorAll("hc-triage-criterium").forEach((criterium) => {
 		const selected = criterium.querySelector("a.btn.mat-selected");
 		if (!selected) return;
@@ -112,18 +248,38 @@ function scanTriageStepContainer(container) {
 }
 
 new MutationObserver((mutations) => {
+	if (!isTriageActive) return;
+
 	for (const mutation of mutations) {
 		for (const node of mutation.addedNodes) {
 			if (node.nodeType !== Node.ELEMENT_NODE) continue;
-			const container = node.matches?.("hc-triage-step-container")
+
+			// Pre-populated triage criteria values
+			const stepContainer = node.matches?.("hc-triage-step-container")
 				? node
 				: node.querySelector?.("hc-triage-step-container");
-			if (container) scanTriageStepContainer(container);
+			if (stepContainer) scanTriageStepContainer(stepContainer);
+
+			// Adviezen step loaded — scan for HC-computed urgency score
+			const adviceContainer = node.matches?.("hc-advice-container")
+				? node
+				: node.querySelector?.("hc-advice-container");
+			if (adviceContainer) scanUrgencyScore();
+
 		}
 	}
 }).observe(document.documentElement, { childList: true, subtree: true });
 
+document.addEventListener("input", (event) => {
+	if (!isTriageActive) return;
+	if (event.target.matches("input[data-qa='triage.contact.form.phonenumber']")) {
+		extractPhoneCallId(event.target);
+	}
+}, { capture: true });
+
 document.addEventListener("change", (event) => {
+	if (!isTriageActive) return;
+
 	const checkbox = event.target.closest("input.mat-checkbox-input");
 	if (!checkbox) return;
 	if (!checkbox.closest("hc-entry-complaints-component")) return;
@@ -149,46 +305,68 @@ document.addEventListener("change", (event) => {
 
 if (IS_TOP) {
 	window.addEventListener("message", (event) => {
-		const origin = new URL(event.origin);
-		const isHealthConnectedOrigin =
-			origin.hostname === "healthconnected.nl" || origin.hostname.endsWith(".healthconnected.nl");
-		if (origin.protocol !== "https:" || !isHealthConnectedOrigin) return;
+		if (!isTrustedOrigin(event.origin)) return;
 
 		const data = event.data;
-		if (!data || data.type !== "TRACK_CLICK" || !data.payload) return;
+		if (!data) return;
 
-		const { category, label, value } = data.payload;
-		if (!["abcd", "triagecriteria", "ingangsklachten"].includes(category)) return;
-
-		postClickEvent(category, label, value);
+		if (data.type === "TRACK_CLICK") {
+			if (!data.payload) return;
+			const { category, label, value } = data.payload;
+			if (!["abcd", "triagecriteria", "ingangsklachten"].includes(category)) return;
+			postClickEvent(category, label, value);
+		} else if (data.type === "SET_META") {
+			if (!data.payload) return;
+			const { field, value } = data.payload;
+			if (!["urgency_score", "altered_urgency_score", "altered_urgency_reason"].includes(field)) return;
+			postClickEvent("urgency", field, value);
+		} else if (data.type === "__SMARTAI_PHONE__" && isTriageActive) {
+			CALL_ID = data.value;
+			console.log("[SmartAI] CALL_ID set from main world:", CALL_ID);
+			window.dispatchEvent(new CustomEvent("smartai:callid-set", { detail: CALL_ID }));
+		}
 	});
 
-	(function createSidePanel() {
-		if (document.getElementById("abcd-sidebar")) return;
-		const panel = document.createElement("div");
-		panel.id = "abcd-sidebar";
-		Object.assign(panel.style, {
+	// --- DEBUG INDICATOR (remove before production) ---
+	(function createDebugIndicator() {
+		const indicator = document.createElement("div");
+		indicator.id = "smartai-debug";
+		Object.assign(indicator.style, {
 			position: "fixed",
-			top: "28px",
-			right: "207px", /* 200px from the right edge */
-			width: "39px",
-			height: "39px",
-			backgroundColor: "#2c3e50",
-			borderRadius: "5px",
+			bottom: "8px",
+			right: "8px",
+			padding: "2px 6px",
+			backgroundColor: "rgba(0,0,0,0.5)",
+			color: "#aaa",
+			fontSize: "11px",
+			fontFamily: "monospace",
+			borderRadius: "3px",
 			zIndex: "999999",
-			display: "flex", /* Use flexbox to center content */
-			justifyContent: "center",
-			alignItems: "center",
-			fontSize: "18px", /* Adjust font size for the dot */
+			pointerEvents: "none",
 		});
-		panel.innerHTML = `🟢`;
-		document.body.appendChild(panel);
+		indicator.textContent = "SmartAI";
+		document.body.appendChild(indicator);
 
-		window.addEventListener("message", (e) => {
-			if (e.data.type === "TRACK_CLICK") {
-				const log = document.getElementById("log");
-				if (log) log.innerText = `Last: ${e.data.payload.label}`;
-			}
+		window.addEventListener("smartai:triage-started", () => {
+			indicator.textContent = "SmartAI ✓ id:…";
+			indicator.style.color = "#4caf50";
+		});
+
+		window.addEventListener("smartai:callid-set", (e) => {
+			indicator.textContent = `SmartAI ✓ id:${e.detail}`;
 		});
 	})();
+
+	// TODO: Replace this click-based trigger with the HealthConnected triage-start event
+	// once their API provides it. Swap the delegated click listener below for:
+	//   window.addEventListener("healthconnected:triage-start", (e) => { ... })
+	// The event is expected to carry a call_id — assign it to CALL_ID at that point.
+	document.addEventListener("click", (event) => {
+		if (!event.target.closest("[data-qa='menu.triage-start']")) return;
+		resetState();
+		isTriageActive = true;
+		window.dispatchEvent(new Event("smartai:triage-started"));
+		window.postMessage({ type: "__SMARTAI_TRIAGE_START__" }, "*");
+		startPhonePoller(); // fallback: catches manually typed values via input events
+	}, { capture: true });
 }
