@@ -6,18 +6,7 @@
 const IS_TOP = window === window.top;
 let CALL_ID = crypto.randomUUID();
 
-// --- 2. AGGREGATED STATE (TOP FRAME ONLY) ---
-let abcdState = {
-	meta: {
-		started_at: nowAmsterdamISO(),
-		updated_at: null,
-	},
-	abcd: {},
-	ingangsklachten: {},
-	triagecriteria: {},
-};
-
-// --- 3. HELPER FUNCTIONS ---
+// --- 2. HELPER FUNCTIONS ---
 
 function normalizeKey(label) {
 	if (!label) return "unknown";
@@ -31,65 +20,34 @@ function normalizeKey(label) {
 	);
 }
 
-function nowAmsterdamISO() {
-	return new Intl.DateTimeFormat("sv-SE", {
-		timeZone: "Europe/Amsterdam",
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-	})
-		.format(new Date())
-		.replace(" ", "T");
-}
+// --- 3. SUPABASE INGEST (TOP FRAME ONLY) ---
 
-// --- 4. STATE MANAGEMENT (TOP FRAME ONLY) ---
-
-function updateAbcdState(payload) {
-	const { category, label, value } = payload;
-	const key = normalizeKey(label);
-
-	if (!abcdState[category]) {
-		abcdState[category] = {};
-	}
-
-	if (value === "deselected") {
-		delete abcdState[category][key];
-	} else {
-		abcdState[category][key] = {
-			text: value,
-			timestamp: nowAmsterdamISO(),
-		};
-	}
-
-	abcdState.meta.updated_at = nowAmsterdamISO();
-}
-
-function buildAggregatedJson() {
-	return {
-		...(CALL_ID ? { call_id: CALL_ID } : {}),
-		gp_name: GP_CONFIG.name,
-		abcd: abcdState,
-	};
-}
-
-// --- 5. WEBHOOK ---
-
-async function callWebhook(json) {
+async function postClickEvent(category, label, value) {
 	try {
-		const resp = await fetch(
-			"https://auxilio.app.n8n.cloud/webhook/healthconnected",
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(json),
-			}
-		);
+		const resp = await fetch(`${SUPABASE_URL}/rest/v1/click_events`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				apikey: SUPABASE_ANON_KEY,
+				Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+				Prefer: "return=minimal",
+			},
+			body: JSON.stringify({
+				source: "healthconnected",
+				session_id: CALL_ID,
+				gp_name: GP_CONFIG.name,
+				category,
+				field_key: normalizeKey(label),
+				value,
+				client_timestamp: new Date().toISOString(),
+			}),
+		});
+		if (!resp.ok) {
+			console.error("Supabase click ingest failed:", resp.status, await resp.text());
+		}
 		return resp.ok;
 	} catch (err) {
-		console.error("Webhook error:", err);
+		console.error("Supabase click ingest error:", err);
 		return false;
 	}
 }
@@ -193,8 +151,8 @@ if (IS_TOP) {
 		const data = event.data;
 		if (!data || data.type !== "TRACK_CLICK") return;
 
-		updateAbcdState(data.payload);
-		callWebhook(buildAggregatedJson());
+		const { category, label, value } = data.payload;
+		postClickEvent(category, label, value);
 	});
 
 	(function createSidePanel() {
