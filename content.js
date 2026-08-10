@@ -26,6 +26,7 @@ async function postClickEvent(category, label, value) {
 	try {
 		const resp = await fetch(`${SUPABASE_URL}/rest/v1/click_events`, {
 			method: "POST",
+			keepalive: true,
 			headers: {
 				"Content-Type": "application/json",
 				apikey: SUPABASE_ANON_KEY,
@@ -148,10 +149,14 @@ document.addEventListener("change", (event) => {
 
 if (IS_TOP) {
 	window.addEventListener("message", (event) => {
+		if (!event.origin.endsWith("healthconnected.nl")) return;
+
 		const data = event.data;
-		if (!data || data.type !== "TRACK_CLICK") return;
+		if (!data || data.type !== "TRACK_CLICK" || !data.payload) return;
 
 		const { category, label, value } = data.payload;
+		if (!["abcd", "triagecriteria", "ingangsklachten"].includes(category)) return;
+
 		postClickEvent(category, label, value);
 	});
 
