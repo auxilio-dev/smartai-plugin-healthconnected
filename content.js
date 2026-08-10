@@ -149,7 +149,10 @@ document.addEventListener("change", (event) => {
 
 if (IS_TOP) {
 	window.addEventListener("message", (event) => {
-		if (!event.origin.endsWith("healthconnected.nl")) return;
+		const origin = new URL(event.origin);
+		const isHealthConnectedOrigin =
+			origin.hostname === "healthconnected.nl" || origin.hostname.endsWith(".healthconnected.nl");
+		if (origin.protocol !== "https:" || !isHealthConnectedOrigin) return;
 
 		const data = event.data;
 		if (!data || data.type !== "TRACK_CLICK" || !data.payload) return;
