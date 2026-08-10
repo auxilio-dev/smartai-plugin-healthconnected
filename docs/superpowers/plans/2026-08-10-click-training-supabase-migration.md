@@ -600,6 +600,14 @@ git commit -m "feat: point plugin at Supabase instead of n8n webhook"
 
 ### Task 7: Replace full-state webhook POST with a single delta insert
 
+> **Superseded by commit `4f37e21` (and Topicus's `76c6c0b`):** while this branch was in
+> progress, `master` redesigned session identity into `SESSION_ID` (stable merge key,
+> assigned once per triage session) plus a separate, optionally-absent `CALL_ID`
+> (phone-derived, for later call-audio matching). The actual implementation sends
+> `session_id: SESSION_ID` and `call_id: CALL_ID` (when known), NOT `session_id: CALL_ID`
+> as shown below — the code blocks in this task are historical, not current. See the
+> reconciliation commit messages for the full rationale.
+
 **Files:**
 - Modify: `content.js:9-95` (aggregated state, helpers, state management, webhook)
 - Modify: `content.js:192-198` (top-frame message listener)
