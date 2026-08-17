@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "SmartAI HealthConnected Plugin",
-    "version": "1.0",
+    "version": "1.1",
     "description": "Plugin voor het uitlezen van HealthConnected triage.",
     "icons": {
         "16": "icon.png",
@@ -13,7 +13,7 @@
         "scripting"
     ],
     "host_permissions": [
-        "https://YOUR-PROJECT-REF.supabase.co/*",
+        "https://kkzsoxnnaccidfylhcgs.supabase.co/*",
         "https://*.healthconnected.nl/*"
     ],
     "action": {
